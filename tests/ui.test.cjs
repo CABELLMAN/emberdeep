@@ -47,7 +47,7 @@ function boot(initial) {
   const context = { document, console, setInterval, clearInterval, AbortController,
     localStorage: { getItem: key => saved.get(key), setItem: (key, value) => saved.set(key, value) }, addEventListener() {} };
   context.window = context; vm.createContext(context);
-  for (const file of ['armor.js', 'campaign.js', 'engine.js', 'town-ui.js', 'game.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context, { filename: file });
+  for (const file of ['armor.js','weapons.js', 'campaign.js', 'engine.js', 'weapon-ui.js','town-ui.js', 'game.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), context, { filename: file });
   function fire(id, type = 'click', dataset = {}) {
     const target = element('button'); target.dataset = dataset;
     for (const [key, value] of Object.entries(dataset)) target.attributes['data-' + key.replace(/[A-Z]/g, c => '-' + c.toLowerCase())] = value;
@@ -60,11 +60,68 @@ test('game boots into town with real document IDs and all service controls', () 
   const ui = boot(); assert.equal(ui.state().phase, 'town');
   assert.equal(ui.nodes.get('floor-title').textContent, 'Hearthglen');
   assert.equal(ui.nodes.get('town').hidden, false);
-  for (const tab of ['tavern', 'merchant', 'forge', 'training']) {
+  for (const tab of ['tavern', 'merchant', 'weapons', 'forge', 'training']) {
     ui.fire('town', 'click', { townTab: tab });
     assert.match(ui.nodes.get('town').innerHTML, /id="depart-form"/);
     assert.match(ui.nodes.get('town').innerHTML, /name="difficulty"/);
   }
+});
+
+test('weapon controls buy each size, change legal grips, and switch owned weapons without paying twice', () => {
+  const g = E.createGame(); g.gold = 3000;
+  const ui = boot(g); ui.fire('town', 'click', { townTab: 'weapons' });
+  for (const type of ['spear', 'axe', 'mace_hammer', 'sword']) for (const size of ['small', 'medium', 'large']) {
+    assert.match(ui.nodes.get('town').innerHTML, new RegExp(`data-buy-gear="${type}_${size}"`));
+  }
+  assert.match(ui.nodes.get('town').innerHTML, /Pierce/); assert.match(ui.nodes.get('town').innerHTML, /Blunt/);
+  ui.fire('town', 'click', { buyGear: 'spear_medium' });
+  assert.equal(ui.state().party[0].attack, 11);
+  ui.fire('town', 'click', { weaponGrip: '2' });
+  assert.equal(ui.state().party[0].attack, 13); assert.equal(ui.state().party[0].weaponGrip, 2);
+  assert.match(ui.nodes.get('town').innerHTML, /Same weapon/);
+  ui.fire('town', 'click', { buyGear: 'axe_small' });
+  const gold = ui.state().gold;
+  assert.equal(ui.state().party[0].weaponGrip, 1);
+  assert.match(ui.nodes.get('town').innerHTML, /data-weapon-grip="2" aria-pressed="false" disabled/);
+  ui.fire('town', 'click', { weaponGrip: '2' }); assert.equal(ui.state().party[0].weaponGrip, 1);
+  ui.fire('town', 'click', { ownedWeapon: 'spear_medium' });
+  assert.equal(ui.state().gold, gold); assert.equal(ui.state().party[0].gear.weapon, 'spear_medium');
+  ui.fire('town', 'click', { ownedWeapon: 'starting' });
+  assert.equal(ui.state().party[0].gear.weapon, null); assert.equal(ui.state().party[0].weapons.length, 2);
+  assert(E.validateSave(ui.state()));
+});
+
+test('weapon filtering and hero selection expose every ranged and magic weapon with legal grips', () => {
+  const g = E.createGame(); g.gold = 3000;
+  const ui = boot(g); ui.fire('town', 'click', { townTab: 'weapons' });
+  ui.nodes.get('town').listeners.change({ target: { dataset: { weaponFilter: 'type' }, value: 'spear' } });
+  assert.match(ui.nodes.get('town').innerHTML, /data-buy-gear="spear_large"/);
+  assert.doesNotMatch(ui.nodes.get('town').innerHTML, /data-buy-gear="axe_large"/);
+  ui.fire('party', 'click', { hero: '1' });
+  for (const type of ['crossbow', 'shortbow', 'longbow']) assert.match(ui.nodes.get('town').innerHTML, new RegExp(`data-buy-gear="${type}"`));
+  ui.fire('town', 'click', { buyGear: 'crossbow' }); assert.equal(ui.state().party[1].weaponGrip, 2);
+  assert.match(ui.nodes.get('town').innerHTML, /data-weapon-grip="1" aria-pressed="false" disabled/);
+  ui.fire('party', 'click', { hero: '2' });
+  for (const type of ['wand', 'staff']) assert.match(ui.nodes.get('town').innerHTML, new RegExp(`data-buy-gear="${type}"`));
+  ui.fire('town', 'click', { buyGear: 'staff' }); assert.equal(ui.state().party[2].weaponGrip, 2);
+  ui.fire('town', 'click', { buyGear: 'wand' }); assert.equal(ui.state().party[2].weaponGrip, 1);
+  assert.match(ui.nodes.get('town').innerHTML, /Arcane/); assert(E.validateSave(ui.state()));
+});
+
+test('combat buttons reflect the equipped weapon, grip, and damage profile after reloading a save', () => {
+  const g = E.createGame(); g.gold = 3000;
+  E.buyEquipment(g, 0, 'mace_hammer_medium'); E.setWeaponGrip(g, 0, 2);
+  E.depart(g, { difficulty: 'normal', seed: 'ui-weapon-combat' });
+  const foe = g.map.entities.find(e => e.type === 'enemy');
+  const [dx, dy] = E.DIRS.find(([dx, dy]) => g.map.tiles[foe.y - dy]?.[foe.x - dx] === 1);
+  g.pos = { x: foe.x - dx, y: foe.y - dy }; E.move(g, dx, dy);
+  const ui = boot(g);
+  assert.match(ui.nodes.get('actions').innerHTML, /Crushing Blow/);
+  assert.match(ui.nodes.get('actions').innerHTML, /2 hands/);
+  assert.match(ui.nodes.get('actions').innerHTML, /11 Blunt/);
+  ui.fire('encounter', 'click', { enemy: '0' });
+  assert(ui.state().log.some(l => l.type === 'damage' && l.text.includes('Blunt')));
+  assert(E.validateSave(ui.state()));
 });
 test('town controls buy gear, recruit, swap, sell, and train the selected hero', () => {
   const g = E.createGame(); g.gold = 2000; g.xp = 300; g.treasures.silver = 2;
@@ -90,7 +147,7 @@ test('departure and confirmed retreat preserve the campaign through interface ev
 test('legacy combat loads without resetting, and victory/defeat CTAs return to town', () => {
   const fixtures = require('./fixtures/v1-saves.json');
   const combat = boot(fixtures.combat); assert.equal(combat.state().phase, 'combat');
-  assert.equal(combat.state().version, 3); assert.equal(combat.nodes.get('town-btn').disabled, true);
+  assert.equal(combat.state().version, 4); assert.equal(combat.nodes.get('town-btn').disabled, true);
   for (const source of [fixtures.won, fixtures.lost]) {
     const ui = boot(source); assert.equal(ui.state().phase, source.phase);
     assert.match(ui.nodes.get('ending').innerHTML, /data-return-town/);
@@ -130,7 +187,7 @@ test('forge exposes five independent armor controls and equips heavy Arcanist pl
 test('v2 purchased armor loads into the correct torso layer and appears in the forge', () => {
   const source = require('./fixtures/v2-saves.json').town;
   const ui = boot(source); ui.fire('town', 'click', { townTab: 'forge' });
-  assert.equal(ui.state().version, 3); assert.equal(ui.state().party[0].gear.armor.torso.mail, 'mail');
+  assert.equal(ui.state().version, 4); assert.equal(ui.state().party[0].gear.armor.torso.mail, 'mail');
   assert.match(ui.nodes.get('town').innerHTML, /Warded Mail/);
   ui.fire('town', 'click', { armorLocation: 'torso', armorLayer: 'mail' });
   assert.match(ui.nodes.get('town').innerHTML, /data-owned-equip="mail"/);

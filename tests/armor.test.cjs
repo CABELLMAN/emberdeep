@@ -90,7 +90,7 @@ test('v2 armor saves migrate active and reserve heroes without losing bonuses, h
   const fixtures = require('./fixtures/v2-saves.json');
   for (const old of Object.values(fixtures)) {
     const source = JSON.stringify(old), g = E.migrateSave(old);
-    assert(g && E.validateSave(g), `Invalid migrated ${old.phase}`); assert.equal(g.version, 3);
+    assert(g && E.validateSave(g), `Invalid migrated ${old.phase}`); assert.equal(g.version, 4);
     assert.equal(JSON.stringify(old), source);
     for (const key of ['phase', 'turn', 'gold', 'xp', 'floor', 'potions']) assert.equal(g[key], old[key]);
     assert.deepEqual(g.combat, old.combat);

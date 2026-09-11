@@ -70,7 +70,13 @@
     }
     return false;
   }
-  function hurt(g,e,amount) { let bonus=0;if(e.marked>0){e.marked--;bonus=3;}const damage=Math.max(1,amount+bonus-e.armor);e.hp=Math.max(0,e.hp-damage);log(g,`${e.name} takes ${damage} damage${e.hp===0?' and falls':''}.`,'damage'); }
+  function hurt(g,e,amount,profile) {
+    let bonus=0;if(e.marked>0){e.marked--;bonus=3;}
+    // Armor is a flat reduction applied once to the entire hit, before distributing damage.
+    const damage=Math.max(1,amount+bonus-e.armor), parts=C.splitDamage(damage,profile);
+    e.hp=Math.max(0,e.hp-damage);
+    log(g,`${e.name} takes ${damage} damage (${C.damageText(parts)})${e.hp===0?' and falls':''}.`,'damage');
+  }
   function checkVictory(g) {
     if(g.combat.enemies.some(e=>e.hp>0))return false;
     const boss=g.combat.boss,count=g.combat.enemies.length,multiplier=C.DIFFICULTIES[g.difficulty].reward;
@@ -89,8 +95,8 @@
     if(action==='attack'&&(!e||e.hp<=0))return false;
     if(action==='special'&&(h.cooldown>0||h.id==='ranger'&&(!e||e.hp<=0)))return false;
     if(action==='potion'){const target=g.party[targetIndex];if(!target||target.hp<=0||target.hp===target.maxHp||g.potions<=0)return false;g.potions--;target.hp=Math.min(target.maxHp,target.hp+18);log(g,`${h.name} restores 18 health to ${target.name}.`,'heal');}
-    if(action==='attack')hurt(g,e,h.attack);
-    if(action==='special'){h.cooldown=2;if(h.id==='warden'){c.guard=true;log(g,`${h.name} raises Bulwark. All incoming damage is halved this round.`,'heal');}else if(h.id==='ranger'){hurt(g,e,h.attack-2);if(e.hp>0)e.marked=2;log(g,`${h.name} marks the quarry. The next two hits gain +3 damage.`,'combat');}else {log(g,`${h.name} unleashes an Ember Wave.`,'combat');c.enemies.filter(v=>v.hp>0).forEach(v=>hurt(g,v,h.attack+1));}}
+    if(action==='attack')hurt(g,e,h.attack,C.equippedWeapon(h).damage);
+    if(action==='special'){h.cooldown=2;if(h.id==='warden'){c.guard=true;log(g,`${h.name} raises Bulwark. All incoming damage is halved this round.`,'heal');}else if(h.id==='ranger'){hurt(g,e,h.attack-2,C.equippedWeapon(h).damage);if(e.hp>0)e.marked=2;log(g,`${h.name} marks the quarry. The next two hits gain +3 damage.`,'combat');}else {log(g,`${h.name} unleashes an Ember Wave.`,'combat');c.enemies.filter(v=>v.hp>0).forEach(v=>hurt(g,v,h.attack+1,{arcane:100}));}}
     if(action==='guard'){log(g,`${h.name} holds their action.`);}
     h.acted=true;g.turn++;if(checkVictory(g))return true;if(g.party.every(v=>v.hp<=0||v.acted))enemyTurn(g);return true;
   }
@@ -99,7 +105,7 @@
   function validateSave(g) {
     try {
       const num=(v,max=1000000)=>Number.isFinite(v)&&v>=0&&v<=max;
-      if(g?.version!==3||typeof g.seed!=='string'||g.seed.length>40||!Number.isInteger(g.floor)||g.floor<1||g.floor>3||!['town','explore','combat','won','lost'].includes(g.phase)||!Number.isInteger(g.turn)||!num(g.turn))return false;
+      if(g?.version!==4||typeof g.seed!=='string'||g.seed.length>40||!Number.isInteger(g.floor)||g.floor<1||g.floor>3||!['town','explore','combat','won','lost'].includes(g.phase)||!Number.isInteger(g.turn)||!num(g.turn))return false;
       if(!Array.isArray(g.party)||g.party.length!==3||!C.validateCampaign(g))return false;
       const allDead=g.party.every(h=>h.hp===0);
       if((g.phase==='lost')!==allDead||g.phase==='won'&&g.floor!==3)return false;

@@ -2,21 +2,14 @@
 (function (root) {
   'use strict';
   const A = typeof module !== 'undefined' && module.exports ? require('./armor.js') : root.EmberArmor;
+  const W = typeof module !== 'undefined' && module.exports ? require('./weapons.js') : root.EmberWeapons;
   const DIFFICULTIES = {
     story: { name: 'Wayfarer', hp: 0.8, damage: 0.7, reward: 0.8, description: 'A gentler descent. Room to learn and explore.' },
     normal: { name: 'Adventurer', hp: 1, damage: 1, reward: 1, description: 'The original expedition. A balanced challenge.' },
     veteran: { name: 'Veteran', hp: 1.4, damage: 1.3, reward: 1.5, description: 'Stronger foes, richer spoils. Bring trained heroes.' },
     nightmare: { name: 'Nightmare', hp: 1.9, damage: 1.65, reward: 2.2, description: 'A brutal descent for an equipped fellowship.' }
   };
-  const EQUIPMENT = {
-    steel_blade: { name: 'Steel Longsword', slot: 'weapon', role: 'warden', attack: 3, hp: 0, armor: 0, price: 80 },
-    hunting_bow: { name: 'Yew Longbow', slot: 'weapon', role: 'ranger', attack: 3, hp: 0, armor: 0, price: 80 },
-    ember_staff: { name: 'Emberwood Staff', slot: 'weapon', role: 'arcanist', attack: 3, hp: 0, armor: 0, price: 80 },
-    rune_blade: { name: 'Runebound Blade', slot: 'weapon', role: 'warden', attack: 6, hp: 0, armor: 0, price: 220 },
-    star_bow: { name: 'Starfall Bow', slot: 'weapon', role: 'ranger', attack: 6, hp: 0, armor: 0, price: 220 },
-    sun_staff: { name: 'Sunfire Staff', slot: 'weapon', role: 'arcanist', attack: 6, hp: 0, armor: 0, price: 220 },
-    ...A.ARMOR_CATALOG
-  };
+  const EQUIPMENT = { ...W.WEAPON_CATALOG, ...A.ARMOR_CATALOG };
   const TREASURES = {
     silver: { name: 'Ancient Silver', value: 25, glyph: '◈' },
     sapphire: { name: 'Duskmire Sapphire', value: 45, glyph: '◆' },
@@ -43,10 +36,10 @@
     g.message = text;
   }
   function stats(h) {
-    const weapon = EQUIPMENT[h.gear.weapon], armor = A.equippedArmor(h);
+    const weapon = W.equippedWeapon(h), armor = A.equippedArmor(h);
     return {
       maxHp: h.baseHp + (h.level - 1) * 5 + h.depthBonus * 5 + armor.reduce((sum, item) => sum + item.hp, 0),
-      attack: h.baseAttack + h.level - 1 + h.depthBonus + (weapon?.attack || 0),
+      attack: h.baseAttack + h.level - 1 + h.depthBonus + weapon.attack + W.gripBonus(weapon, h.weaponGrip),
       armor: armor.reduce((sum, item) => sum + item.armor, 0)
     };
   }
@@ -56,13 +49,13 @@
   }
   function makeHero(def, uid = def.uid) {
     const h = { uid, id: def.id, name: def.name, role: def.role, baseHp: def.baseHp, baseAttack: def.baseAttack,
-      level: 1, depthBonus: 0, gear: { weapon: null, armor: A.emptyArmorSlots() }, armory: [], cooldown: 0, acted: false, hp: 1 };
+      level: 1, depthBonus: 0, gear: { weapon: null, armor: A.emptyArmorSlots() }, armory: [], weapons: [], weaponGrip: W.STARTING_WEAPONS[def.id].hands[0], cooldown: 0, acted: false, hp: 1 };
     sync(h, true);
     return h;
   }
   function updateLevel(g) { g.level = Math.floor(g.party.reduce((sum, h) => sum + h.level, 0) / 3); }
   function newState(seed, map) {
-    return { version: 3, seed: cleanSeed(seed), floor: 1, turn: 0, phase: 'town',
+    return { version: 4, seed: cleanSeed(seed), floor: 1, turn: 0, phase: 'town',
       party: STARTERS.map(h => makeHero(h)), reserves: [], potions: 4, gold: 100, kills: 0, level: 1, xp: 0,
       difficulty: 'normal', treasures: { silver: 0, sapphire: 0, idol: 0, emberheart: 0 },
       expeditions: 0, victories: 0, lastOutcome: null, log: [], combat: null, map, pos: { ...map.start } };
@@ -129,13 +122,31 @@
       record(g, `${h.name} equips ${item.name} on ${A.ARMOR_LOCATIONS[item.location].toLowerCase()}, ${A.ARMOR_LAYERS[item.layer].toLowerCase()}.`, 'loot');
       return true;
     }
-    const current = EQUIPMENT[h.gear[item.slot]];
-    if (current && current.price >= item.price) return false;
+    if (h.weapons.includes(itemId)) return false;
     g.gold -= item.price;
-    h.gear[item.slot] = itemId;
+    h.weapons.push(itemId);
+    h.gear.weapon = itemId;
+    h.weaponGrip = item.hands[0];
     sync(h, true);
-    record(g, `${h.name} equips ${item.name}. Its bonuses are active in the next dungeon.`, 'loot');
+    record(g, `${h.name} equips ${item.name} in ${h.weaponGrip} ${h.weaponGrip === 1 ? 'hand' : 'hands'}. Replaced weapons remain owned.`, 'loot');
     return true;
+  }
+  function equipWeapon(g, heroIndex, itemId, grip) {
+    if (g.phase !== 'town' || !Number.isInteger(heroIndex)) return false;
+    const h = g.party[heroIndex];
+    if (!h || itemId !== null && (!owns(W.WEAPON_CATALOG, itemId) || !h.weapons.includes(itemId))) return false;
+    const item = itemId === null ? W.STARTING_WEAPONS[h.id] : W.WEAPON_CATALOG[itemId];
+    const hands = grip === undefined ? (h.gear.weapon === itemId ? h.weaponGrip : item.hands[0]) : grip;
+    if (item.role !== h.id || !W.validGrip(item, hands) || h.gear.weapon === itemId && h.weaponGrip === hands) return false;
+    h.gear.weapon = itemId;
+    h.weaponGrip = hands;
+    sync(h, true);
+    record(g, `${h.name} readies ${item.name} in ${hands} ${hands === 1 ? 'hand' : 'hands'}.`, 'loot');
+    return true;
+  }
+  function setWeaponGrip(g, heroIndex, grip) {
+    if (!Number.isInteger(heroIndex) || !g.party[heroIndex]) return false;
+    return equipWeapon(g, heroIndex, g.party[heroIndex].gear.weapon, grip);
   }
   function equipArmor(g, heroIndex, itemId) {
     if (g.phase !== 'town' || !Number.isInteger(heroIndex) || !owns(EQUIPMENT, itemId)) return false;
@@ -199,7 +210,7 @@
   function migrateSave(source) {
     try {
       const g = JSON.parse(JSON.stringify(source));
-      if (g?.version === 3) return g;
+      if (g?.version === 4) return g;
       if (g?.version === 1) {
         if (!Array.isArray(g.party) || g.party.length !== 3 || !Number.isInteger(g.level) || g.level < 1 || g.level > 3) return null;
         if (g.party.some((h, i) => h.id !== STARTERS[i].id || h.name !== STARTERS[i].name || h.role !== STARTERS[i].role)) return null;
@@ -213,24 +224,35 @@
           expeditions: 1, victories: g.phase === 'won' ? 1 : 0, lastOutcome: null });
         if (g.combat) for (const e of g.combat.enemies) e.areaDamage = e.type === 'boss' ? 9 : e.type === 'hexer' ? 4 : 0;
       }
-      if (g?.version !== 2 || !Array.isArray(g.party) || !Array.isArray(g.reserves)) return null;
-      for (const h of members(g)) {
-        if (!h.gear || ![null, 'leather', 'mail', 'plate'].includes(h.gear.armor)) return null;
-        const previous = h.gear.armor;
-        h.gear.armor = A.emptyArmorSlots();
-        h.armory = previous ? [previous] : [];
-        if (previous) {
-          const item = EQUIPMENT[previous];
-          h.gear.armor[item.location][item.layer] = previous;
+      if (!Array.isArray(g?.party) || !Array.isArray(g.reserves)) return null;
+      if (g.version === 2) {
+        for (const h of members(g)) {
+          if (!h.gear || ![null, 'leather', 'mail', 'plate'].includes(h.gear.armor)) return null;
+          const previous = h.gear.armor;
+          h.gear.armor = A.emptyArmorSlots();
+          h.armory = previous ? [previous] : [];
+          if (previous) {
+            const item = EQUIPMENT[previous];
+            h.gear.armor[item.location][item.layer] = previous;
+          }
         }
+        g.version = 3;
       }
-      g.version = 3;
+      if (g.version !== 3) return null;
+      for (const h of members(g)) {
+        if (!h.gear || h.gear.weapon !== null && !owns(W.WEAPON_CATALOG, h.gear.weapon)) return null;
+        const item = W.equippedWeapon(h);
+        if (!item || item.role !== h.id) return null;
+        h.weapons = h.gear.weapon === null ? [] : [h.gear.weapon];
+        h.weaponGrip = item.hands[0];
+      }
+      g.version = 4;
       return g;
     } catch { return null; }
   }
   function validateCampaign(g) {
     const int = (n, max = 1000000000) => Number.isInteger(n) && n >= 0 && n <= max;
-    if (g.version !== 3 || !owns(DIFFICULTIES, g.difficulty) || !Array.isArray(g.reserves) || g.reserves.length > 3 ||
+    if (g.version !== 4 || !owns(DIFFICULTIES, g.difficulty) || !Array.isArray(g.reserves) || g.reserves.length > 3 ||
         !int(g.expeditions) || !int(g.victories) || g.victories > g.expeditions || ![null, 'victory', 'retreat', 'rescued'].includes(g.lastOutcome)) return false;
     if (!g.treasures || Object.keys(g.treasures).length !== Object.keys(TREASURES).length || Object.keys(TREASURES).some(id => !int(g.treasures[id]))) return false;
     const all = members(g);
@@ -240,7 +262,7 @@
       if (!def || h.id !== def.id || h.name !== def.name || h.role !== def.role || h.baseHp !== def.baseHp || h.baseAttack !== def.baseAttack ||
           !int(h.level, 10) || h.level < 1 || !int(h.depthBonus, 2) || !h.gear || Object.keys(h.gear).length !== 2) return false;
       if (h.gear.weapon !== null && (!owns(EQUIPMENT, h.gear.weapon) || EQUIPMENT[h.gear.weapon].slot !== 'weapon' || EQUIPMENT[h.gear.weapon].role !== h.id)) return false;
-      if (!A.validArmorLoadout(h)) return false;
+      if (!W.validWeaponLoadout(h) || !A.validArmorLoadout(h)) return false;
       const expected = stats(h);
       if (h.maxHp !== expected.maxHp || h.attack !== expected.attack || h.armor !== expected.armor || !int(h.hp, h.maxHp) ||
           !int(h.cooldown, 2) || typeof h.acted !== 'boolean') return false;
@@ -248,9 +270,9 @@
     }
     return g.level === Math.floor(g.party.reduce((n, h) => n + h.level, 0) / 3);
   }
-  const api = { ...A, DIFFICULTIES, EQUIPMENT, TREASURES, RECRUITS, STARTERS, newState, depart, returnToTown,
+  const api = { ...A, ...W, DIFFICULTIES, EQUIPMENT, TREASURES, RECRUITS, STARTERS, newState, depart, returnToTown,
     sellTreasure, treasureValue, addTreasure, buyEquipment, buyPotion, recruit, swapParty, train, trainingCost,
-    stats, sync, migrateSave, validateCampaign, equipArmor, unequipArmor };
+    stats, sync, migrateSave, validateCampaign, equipArmor, unequipArmor, equipWeapon, setWeaponGrip };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.EmberCampaign = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
