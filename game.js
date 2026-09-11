@@ -61,9 +61,17 @@
     const b=e.target.closest('button');if(!b||b.disabled||game.phase!=='town')return;
     const d=b.dataset;
     if(d.townTab){window.EmberTown.setTab(d.townTab);render();$('town').querySelector(`[data-town-tab="${d.townTab}"]`).focus();return;}
+    if(d.armorLocation){
+      if(!window.EmberTown.setArmorAttribute('location',d.armorLocation)||!window.EmberTown.setArmorAttribute('layer',d.armorLayer))return;
+      const piece=E.EQUIPMENT[game.party[selected].gear.armor[d.armorLocation][d.armorLayer]];
+      if(piece)for(const attribute of ['tier','weight','class'])window.EmberTown.setArmorAttribute(attribute,piece[attribute]);
+      render();$('town').querySelector('[data-armor-filter="location"]').focus();return;
+    }
     let changed=false;
     if(d.sell)changed=E.sellTreasure(game,d.sell);
     else if(d.buyGear)changed=E.buyEquipment(game,selected,d.buyGear);
+    else if(d.ownedEquip)changed=E.equipArmor(game,selected,d.ownedEquip);
+    else if(d.unequipLocation)changed=E.unequipArmor(game,selected,d.unequipLocation,d.unequipLayer);
     else if(b.hasAttribute('data-buy-potion'))changed=E.buyPotion(game);
     else if(d.recruit)changed=E.recruit(game,d.recruit);
     else if(d.swap)changed=E.swapParty(game,selected,d.swap);
@@ -71,7 +79,10 @@
     if(changed){action='attack';tone('heal');render();}
   });
   $('town').addEventListener('input',e=>{if(e.target.id==='dungeon-seed')window.EmberTown.setSeed(e.target.value);});
-  $('town').addEventListener('change',e=>{if(e.target.name==='difficulty'){window.EmberTown.setDifficulty(e.target.value);render();$('town').querySelector('input[name="difficulty"]:checked').focus();}});
+  $('town').addEventListener('change',e=>{
+    if(e.target.dataset?.armorFilter){const attribute=e.target.dataset.armorFilter;if(window.EmberTown.setArmorAttribute(attribute,e.target.value)){render();$('town').querySelector(`[data-armor-filter="${attribute}"]`).focus();}return;}
+    if(e.target.name==='difficulty'){window.EmberTown.setDifficulty(e.target.value);render();$('town').querySelector('input[name="difficulty"]:checked').focus();}
+  });
   $('town').addEventListener('submit',e=>{if(e.target.id!=='depart-form')return;e.preventDefault();stopWalking();if(E.depart(game,window.EmberTown.options(game))){window.EmberTown.resetDraft();selected=0;action='attack';render();canvas.focus();}});
   canvas.addEventListener('click',e=>{if(game.phase!=='explore')return;stopWalking();const rect=canvas.getBoundingClientRect(),scale=Math.min(rect.width/canvas.width,rect.height/canvas.height),left=(rect.width-canvas.width*scale)/2,top=(rect.height-canvas.height*scale)/2;const x=Math.floor((e.clientX-rect.left-left)/(28*scale)),y=Math.floor((e.clientY-rect.top-top)/(28*scale)),path=E.pathTo(game,x,y);if(!path.length)return;let i=0;const tick=()=>{const p=path[i++];if(!p||game.phase!=='explore'){stopWalking();return;}const entity=E.entityAt(game,p.x,p.y);if(!step(p.x-game.pos.x,p.y-game.pos.y)||i>=path.length||entity)stopWalking();};walking=setInterval(tick,110);tick();});
   document.addEventListener('keydown',e=>{if(document.querySelector('dialog[open]')||['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)||e.target.isContentEditable||(e.target.tagName==='BUTTON'&&[' ','Enter','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))||e.ctrlKey||e.metaKey||e.altKey)return;if(e.key==='?'){e.preventDefault();stopWalking();$('help-dialog').showModal();return;}if(e.key==='Escape'){stopWalking();action='attack';render();return;}const moves={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0],w:[0,-1],s:[0,1],a:[-1,0],d:[1,0]};if(game.phase==='explore'&&moves[e.key]){e.preventDefault();stopWalking();step(...moves[e.key]);}if(e.code==='Space'&&game.phase==='explore'){e.preventDefault();stopWalking();if(E.interact(game))afterAction();}if(['1','2','3'].includes(e.key)){const i=Number(e.key)-1;if(action==='potion'){perform('potion',i);return;}if(game.party[i].hp>0&&(!game.party[i].acted||game.phase!=='combat')){selected=i;action='attack';render();}}});
@@ -86,6 +97,7 @@
   const context=document.modelContext;
   if(context?.registerTool){
     const lifecycle=new AbortController();
+    const armorSchema={type:'object',properties:{location:{type:'string',enum:Object.keys(E.ARMOR_LOCATIONS)},layer:{type:'string',enum:Object.keys(E.ARMOR_LAYERS)},tier:{type:'integer',minimum:1,maximum:5},weight:{type:'string',enum:Object.keys(E.ARMOR_WEIGHTS)},class:{type:'string',enum:Object.keys(E.ARMOR_CLASSES)}},required:['location','layer','tier','weight','class'],additionalProperties:false};
     const snapshot=()=>({phase:game.phase,difficulty:game.difficulty,gold:game.gold,xp:game.xp,treasures:{...game.treasures},reserves:game.reserves.map(h=>({...h})),floor:game.floor,position:{...game.pos},party:game.party.map(h=>({...h})),potions:game.potions,round:game.combat?.round||null,enemies:game.combat?.enemies.map(e=>({...e}))||[],nearby:game.map.entities.filter(e=>game.map.visible.includes(E.key(e.x,e.y))),message:game.message});
     const registrations=[
       {name:'read_expedition',title:'Read expedition',description:'Read party health, combat intentions, visible discoveries, and the current phase.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:false},execute:()=>snapshot()},
@@ -97,13 +109,17 @@
         if(!E.depart(game,input))throw Error('Select a valid difficulty while in town.');
         stopWalking();selected=0;action='attack';window.EmberTown.resetDraft();render();return snapshot();
       }},
-      {name:'use_town_service',title:'Use a town service',description:'Sell treasure, buy and equip gear, buy a draught, recruit a reserve, swap a party slot, or train a hero. Requires town. Read the catalog first.',inputSchema:{type:'object',properties:{service:{type:'string',enum:['sell','equipment','potion','recruit','swap','train']},hero:{type:'integer',minimum:0,maximum:2},item:{type:'string'}},required:['service'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:false},execute:input=>{
+      {name:'use_town_service',title:'Use a town service',description:'Sell treasure, buy and equip gear, equip owned armor, remove an armor layer, buy a draught, recruit, swap, or train. Requires town. Armor purchases only replace their own location and layer.',inputSchema:{type:'object',properties:{service:{type:'string',enum:['sell','equipment','equip_owned','unequip_armor','potion','recruit','swap','train']},hero:{type:'integer',minimum:0,maximum:2},item:{type:'string'},location:{type:'string',enum:Object.keys(E.ARMOR_LOCATIONS)},layer:{type:'string',enum:Object.keys(E.ARMOR_LAYERS)}},required:['service'],additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:false},execute:input=>{
         if(game.phase!=='town'||!input)throw Error('Town services require returning to Hearthglen.');
-        const operations={sell:()=>E.sellTreasure(game,input.item||'all'),equipment:()=>E.buyEquipment(game,input.hero,input.item),potion:()=>E.buyPotion(game),recruit:()=>E.recruit(game,input.item),swap:()=>E.swapParty(game,input.hero,input.item),train:()=>E.train(game,input.hero)};
+        const operations={sell:()=>E.sellTreasure(game,input.item||'all'),equipment:()=>E.buyEquipment(game,input.hero,input.item),equip_owned:()=>E.equipArmor(game,input.hero,input.item),unequip_armor:()=>E.unequipArmor(game,input.hero,input.location,input.layer),potion:()=>E.buyPotion(game),recruit:()=>E.recruit(game,input.item),swap:()=>E.swapParty(game,input.hero,input.item),train:()=>E.train(game,input.hero)};
         if(!Object.hasOwn(operations,input.service)||!operations[input.service]())throw Error('This purchase or party action is unavailable; check funds, XP, targets, and ownership.');
         action='attack';render();return snapshot();
       }},
-      {name:'read_town_catalog',title:'Read town catalog',description:'Read equipment prices, treasure values, recruit offers, training costs, and dungeon difficulties.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:false},execute:()=>({equipment:E.EQUIPMENT,treasures:E.TREASURES,recruits:E.RECRUITS,difficulties:E.DIFFICULTIES,training:game.party.map(h=>({hero:h.uid,level:h.level,...E.trainingCost(h)}))})},
+      {name:'read_town_catalog',title:'Read town catalog',description:'Read weapons, armor attribute choices, treasure, recruits, training, and difficulties. Supply all five armor attributes to look up one armor piece and its purchase ID.',inputSchema:{type:'object',properties:{armor:armorSchema},additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:false},execute:input=>{
+        if(input?.armor!==undefined&&!E.validArmorAttributes(input.armor))throw Error('Armor needs valid independent location, layer, tier, weight, and class attributes.');
+        const itemId=input?.armor?E.armorItemId(input.armor):null;
+        return {equipment:Object.fromEntries(Object.entries(E.EQUIPMENT).filter(([,item])=>item.slot==='weapon')),armorAttributes:{location:E.ARMOR_LOCATIONS,layer:E.ARMOR_LAYERS,tier:E.ARMOR_TIERS,weight:E.ARMOR_WEIGHTS,class:E.ARMOR_CLASSES},armorItem:itemId?{id:itemId,...E.EQUIPMENT[itemId]}:null,treasures:E.TREASURES,recruits:E.RECRUITS,difficulties:E.DIFFICULTIES,training:game.party.map(h=>({hero:h.uid,level:h.level,...E.trainingCost(h)}))};
+      }},
       {name:'return_to_town',title:'Return to Hearthglen',description:'End the current dungeon and return to town, preserving spoils and campaign progress. Requires confirmRetreat=true during exploration; unavailable during combat.',inputSchema:{type:'object',properties:{confirmRetreat:{type:'boolean'}},additionalProperties:false},annotations:{readOnlyHint:false,untrustedContentHint:false},execute:input=>{
         if(game.phase==='explore'&&input?.confirmRetreat!==true)throw Error('Returning abandons this dungeon; confirm the retreat first.');
         if(!['explore','won','lost'].includes(game.phase))throw Error('Finish the encounter before returning, or you are already in town.');

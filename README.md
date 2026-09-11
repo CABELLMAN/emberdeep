@@ -17,7 +17,7 @@ Open `index.html` in a modern browser. No installation, account, or network conn
 
 - **The Lantern Inn:** heals and revives everyone on return for free. Recruit Bryn, Rowan, or Ione into reserves. Select one of the three active heroes, then assign a reserve to that slot. Benched heroes retain their equipment and training.
 - **Treasure & supplies:** sell individual treasure stacks or all treasure. Buy healing draughts for 20 gold. The inn ensures at least two unsellable draughts on return so an empty purse cannot prevent another expedition.
-- **The forge:** choose an active hero and purchase a weapon or armor. Gear equips immediately; upgrades replace earlier gear without stacking bonuses or refunding the previous item. Armor reduces incoming damage before Bulwark.
+- **The forge:** choose an active hero and purchase weapons or armor. Armor has independent location, layer, tier, weight, and class attributes. Purchases equip immediately in the matching location and layer. Replaced armor stays owned by that hero and can be equipped again for free in town. Weapons still replace the previous weapon.
 - **Training grounds:** spend shared XP and gold to permanently level an active hero, up to level 10. Each level adds 5 max HP and 1 attack. Training from level N costs 40N XP and 30N gold.
 - **Expedition board:** choose difficulty and an optional seed, then depart. Difficulty stays fixed for all three floors. The same seed reproduces the same layout on any difficulty.
 
@@ -32,13 +32,32 @@ Treasure quantities use the reward multiplier, rounded to whole items with a min
 
 After victory or defeat, choose **Return to Hearthglen**. While exploring, **Return to town** offers a confirmed retreat that abandons the current dungeon. All recovered spoils, equipment, recruits, and permanent levels survive. Town services are unavailable during combat.
 
+## Armor
+
+| Attribute | Values |
+| --- | --- |
+| Location | Head, left arm, right arm, torso, left leg, right leg |
+| Layer | Flexible (inner), Mail (middle), Plate (outer) |
+| Tier | 1 Serviceable, 2 Sturdy, 3 Refined, 4 Masterwork, 5 Legendary |
+| Weight | Light, Medium, Heavy |
+| Class suitability | Warden, Ranger, Arcanist, All classes |
+
+All five attributes are independent. Every combination is represented in the forge, including heavy Arcanist plate and light Warden mail. Tier is stored as a number; its flavor name is a display label. Layer specifies where the piece is worn, while weight describes its build. Weight influences bonuses and price without restricting the layer or class.
+
+Each hero has **18 armor slots**: six locations with three layers apiece. A Flexible sleeve, Mail sleeve, and Plate vambrace can coexist on the same arm. Armor and HP bonuses from equipped pieces add together; armor reduces incoming damage before Bulwark. Combat currently uses this combined armor value for each hit. Locations determine equipment slots rather than separate hit-location damage.
+
+Select any cell in the forge’s armor table to inspect its current piece, change any of the five attributes, and buy a matching piece. Class-specific armor fits its named class; All classes pieces fit anyone. An owned piece can replace another in the same slot regardless of tier or price. Unequipping keeps ownership. Each hero’s armor stays with them when they move into or out of reserves.
+
+Both v1 and v2 saves migrate automatically. Older Trail Leathers, Warded Mail, and Emberguard Armor become torso pieces in their matching layers, retaining their original health/armor bonuses and names. Campaign progress and unfinished combat are preserved.
+
 ## Development
 
 Vanilla HTML, CSS, Canvas 2D, and JavaScript. There are no dependencies to install.
 
 `npm test` runs the engine tests using Node’s built-in test runner. `npm run build` validates JavaScript syntax and copies public files into `dist/`. `npm start` serves the game on loopback port 4173.
 
-- `campaign.js`: town services, hero roster, gear stats, training, difficulty, and legacy save migration.
+- `armor.js`: independent armor attributes, full combination catalog, body/layer slots, and loadout validation.
+- `campaign.js`: town services, hero roster, armor ownership/equipping, gear stats, training, difficulty, and legacy save migration.
 - `engine.js`: deterministic generation, visibility, movement, combat, expedition progression, and save validation.
 - `town-ui.js`: town services and expedition board.
 - `game.js`: interface, canvas, keyboard and pointer controls, optional sound, automatic saving.

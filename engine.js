@@ -99,7 +99,7 @@
   function validateSave(g) {
     try {
       const num=(v,max=1000000)=>Number.isFinite(v)&&v>=0&&v<=max;
-      if(g?.version!==2||typeof g.seed!=='string'||g.seed.length>40||!Number.isInteger(g.floor)||g.floor<1||g.floor>3||!['town','explore','combat','won','lost'].includes(g.phase)||!Number.isInteger(g.turn)||!num(g.turn))return false;
+      if(g?.version!==3||typeof g.seed!=='string'||g.seed.length>40||!Number.isInteger(g.floor)||g.floor<1||g.floor>3||!['town','explore','combat','won','lost'].includes(g.phase)||!Number.isInteger(g.turn)||!num(g.turn))return false;
       if(!Array.isArray(g.party)||g.party.length!==3||!C.validateCampaign(g))return false;
       const allDead=g.party.every(h=>h.hp===0);
       if((g.phase==='lost')!==allDead||g.phase==='won'&&g.floor!==3)return false;
