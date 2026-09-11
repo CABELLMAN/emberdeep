@@ -3,6 +3,7 @@
   'use strict';
   const A = typeof module !== 'undefined' && module.exports ? require('./armor.js') : root.EmberArmor;
   const W = typeof module !== 'undefined' && module.exports ? require('./weapons.js') : root.EmberWeapons;
+  const F = typeof module !== 'undefined' && module.exports ? require('./formations.js') : root.EmberFormations;
   const DIFFICULTIES = {
     story: { name: 'Wayfarer', hp: 0.8, damage: 0.7, reward: 0.8, description: 'A gentler descent. Room to learn and explore.' },
     normal: { name: 'Adventurer', hp: 1, damage: 1, reward: 1, description: 'The original expedition. A balanced challenge.' },
@@ -19,6 +20,9 @@
   const RECRUITS = {
     bryn: { name: 'Bryn', id: 'warden', role: 'Warden', baseHp: 46, baseAttack: 7, price: 110, description: 'A sturdy veteran. More health, a measured strike.' },
     rowan: { name: 'Rowan', id: 'ranger', role: 'Ranger', baseHp: 32, baseAttack: 8, price: 125, description: 'A keen-eyed scout with a stronger opening shot.' },
+    maela: { name: 'Maela', id: 'warden', role: 'Warden', baseHp: 40, baseAttack: 9, price: 160, description: 'A bold duelist, ready to hold a flank.' },
+    finn: { name: 'Finn', id: 'ranger', role: 'Ranger', baseHp: 30, baseAttack: 9, price: 155, description: 'A traveling bowyer with a steady aim.' },
+    tamsin: { name: 'Tamsin', id: 'arcanist', role: 'Arcanist', baseHp: 34, baseAttack: 7, price: 150, description: 'A resilient scholar, at home behind a shield line.' },
     ione: { name: 'Ione', id: 'arcanist', role: 'Arcanist', baseHp: 30, baseAttack: 8, price: 140, description: 'An ember scholar whose spells burn brighter.' }
   };
   const STARTERS = [
@@ -53,10 +57,10 @@
     sync(h, true);
     return h;
   }
-  function updateLevel(g) { g.level = Math.floor(g.party.reduce((sum, h) => sum + h.level, 0) / 3); }
+  function updateLevel(g) { g.level = Math.floor(g.party.reduce((sum, h) => sum + h.level, 0) / g.party.length); }
   function newState(seed, map) {
-    return { version: 4, seed: cleanSeed(seed), floor: 1, turn: 0, phase: 'town',
-      party: STARTERS.map(h => makeHero(h)), reserves: [], potions: 4, gold: 100, kills: 0, level: 1, xp: 0,
+    return { version: 5, seed: cleanSeed(seed), floor: 1, turn: 0, phase: 'town',
+      party: STARTERS.map(h => makeHero(h)), reserves: [], formation: F.defaultFormation(STARTERS), potions: 4, gold: 100, kills: 0, level: 1, xp: 0,
       difficulty: 'normal', treasures: { silver: 0, sapphire: 0, idol: 0, emberheart: 0 },
       expeditions: 0, victories: 0, lastOutcome: null, log: [], combat: null, map, pos: { ...map.start } };
   }
@@ -187,9 +191,42 @@
     if (g.phase !== 'town' || !Number.isInteger(heroIndex) || !g.party[heroIndex]) return false;
     const reserveIndex = g.reserves.findIndex(h => h.uid === reserveId);
     if (reserveIndex < 0) return false;
+    const position = F.heroPosition(g, g.party[heroIndex]);
+    g.formation[position] = reserveId;
     [g.party[heroIndex], g.reserves[reserveIndex]] = [g.reserves[reserveIndex], g.party[heroIndex]];
     updateLevel(g);
     record(g, `${g.party[heroIndex].name} takes party slot ${heroIndex + 1}. ${g.reserves[reserveIndex].name} waits at the inn.`);
+    return true;
+  }
+  function assignFormation(g, heroIndex, position) {
+    if (g.phase !== 'town' || !Number.isInteger(heroIndex) || !g.party[heroIndex] || !owns(F.FORMATION_SLOTS, position)) return false;
+    const hero = g.party[heroIndex], previous = F.heroPosition(g, hero);
+    if (previous === position) return false;
+    g.formation[previous] = g.formation[position];
+    g.formation[position] = hero.uid;
+    record(g, `${hero.name} takes ${F.FORMATION_SLOTS[position].name.toLowerCase()}. Formation changes are ready for the next battle.`);
+    return true;
+  }
+  function addToParty(g, reserveId, position) {
+    if (g.phase !== 'town' || g.party.length >= F.MAX_PARTY) return false;
+    const reserveIndex = g.reserves.findIndex(h => h.uid === reserveId);
+    const slot = position === undefined ? Object.keys(F.FORMATION_SLOTS).find(key => g.formation[key] === null) : position;
+    if (reserveIndex < 0 || !owns(F.FORMATION_SLOTS, slot) || g.formation[slot] !== null) return false;
+    const hero = g.reserves.splice(reserveIndex, 1)[0];
+    g.party.push(hero);
+    g.formation[slot] = hero.uid;
+    updateLevel(g);
+    record(g, `${hero.name} joins the active party at ${F.FORMATION_SLOTS[slot].name.toLowerCase()}. ${g.party.length} of ${F.MAX_PARTY} positions filled.`, 'loot');
+    return true;
+  }
+  function benchHero(g, heroIndex) {
+    if (g.phase !== 'town' || !Number.isInteger(heroIndex) || !g.party[heroIndex] || g.party.length <= 1) return false;
+    const hero = g.party[heroIndex];
+    g.formation[F.heroPosition(g, hero)] = null;
+    g.party.splice(heroIndex, 1);
+    g.reserves.push(hero);
+    updateLevel(g);
+    record(g, `${hero.name} rests at the inn. Their equipment and training stay with them.`);
     return true;
   }
   function trainingCost(h) { return { gold: 30 * h.level, xp: 40 * h.level }; }
@@ -210,7 +247,7 @@
   function migrateSave(source) {
     try {
       const g = JSON.parse(JSON.stringify(source));
-      if (g?.version === 4) return g;
+      if (g?.version === 5) return g;
       if (g?.version === 1) {
         if (!Array.isArray(g.party) || g.party.length !== 3 || !Number.isInteger(g.level) || g.level < 1 || g.level > 3) return null;
         if (g.party.some((h, i) => h.id !== STARTERS[i].id || h.name !== STARTERS[i].name || h.role !== STARTERS[i].role)) return null;
@@ -238,24 +275,30 @@
         }
         g.version = 3;
       }
-      if (g.version !== 3) return null;
-      for (const h of members(g)) {
-        if (!h.gear || h.gear.weapon !== null && !owns(W.WEAPON_CATALOG, h.gear.weapon)) return null;
-        const item = W.equippedWeapon(h);
-        if (!item || item.role !== h.id) return null;
-        h.weapons = h.gear.weapon === null ? [] : [h.gear.weapon];
-        h.weaponGrip = item.hands[0];
+      if (g.version === 3) {
+        for (const h of members(g)) {
+          if (!h.gear || h.gear.weapon !== null && !owns(W.WEAPON_CATALOG, h.gear.weapon)) return null;
+          const item = W.equippedWeapon(h);
+          if (!item || item.role !== h.id) return null;
+          h.weapons = h.gear.weapon === null ? [] : [h.gear.weapon];
+          h.weaponGrip = item.hands[0];
+        }
+        g.version = 4;
       }
-      g.version = 4;
+      if (g.version !== 4 || g.party.length !== 3) return null;
+      // All three legacy members remain exposed so saved enemy intentions retain their targets.
+      g.formation = F.defaultFormation(g.party);
+      g.version = 5;
       return g;
     } catch { return null; }
   }
   function validateCampaign(g) {
     const int = (n, max = 1000000000) => Number.isInteger(n) && n >= 0 && n <= max;
-    if (g.version !== 4 || !owns(DIFFICULTIES, g.difficulty) || !Array.isArray(g.reserves) || g.reserves.length > 3 ||
+    if (g.version !== 5 || !owns(DIFFICULTIES, g.difficulty) || !Array.isArray(g.reserves) || g.reserves.length > STARTERS.length + Object.keys(RECRUITS).length - 1 ||
         !int(g.expeditions) || !int(g.victories) || g.victories > g.expeditions || ![null, 'victory', 'retreat', 'rescued'].includes(g.lastOutcome)) return false;
     if (!g.treasures || Object.keys(g.treasures).length !== Object.keys(TREASURES).length || Object.keys(TREASURES).some(id => !int(g.treasures[id]))) return false;
     const all = members(g);
+    if (!F.validFormation(g)) return false;
     if (new Set(all.map(h => h.uid)).size !== all.length) return false;
     for (const h of all) {
       const def = STARTERS.find(s => s.uid === h.uid) || (owns(RECRUITS, h.uid) ? RECRUITS[h.uid] : null);
@@ -268,11 +311,11 @@
           !int(h.cooldown, 2) || typeof h.acted !== 'boolean') return false;
       if ((g.phase === 'town' || g.reserves.includes(h)) && (h.depthBonus !== 0 || h.hp !== h.maxHp || h.acted || h.cooldown !== 0)) return false;
     }
-    return g.level === Math.floor(g.party.reduce((n, h) => n + h.level, 0) / 3);
+    return g.level === Math.floor(g.party.reduce((n, h) => n + h.level, 0) / g.party.length);
   }
-  const api = { ...A, ...W, DIFFICULTIES, EQUIPMENT, TREASURES, RECRUITS, STARTERS, newState, depart, returnToTown,
+  const api = { ...A, ...W, ...F, DIFFICULTIES, EQUIPMENT, TREASURES, RECRUITS, STARTERS, newState, depart, returnToTown,
     sellTreasure, treasureValue, addTreasure, buyEquipment, buyPotion, recruit, swapParty, train, trainingCost,
-    stats, sync, migrateSave, validateCampaign, equipArmor, unequipArmor, equipWeapon, setWeaponGrip };
+    stats, sync, migrateSave, validateCampaign, equipArmor, unequipArmor, equipWeapon, setWeaponGrip, assignFormation, addToParty, benchHero };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.EmberCampaign = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

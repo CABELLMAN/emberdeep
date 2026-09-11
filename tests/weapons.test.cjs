@@ -109,7 +109,7 @@ test('v3 campaigns migrate every original weapon, active/reserve armor, and unfi
   const fixtures = require('./fixtures/v3-saves.json');
   for (const [name, old] of Object.entries(fixtures)) {
     const before = JSON.stringify(old), g = E.migrateSave(old);
-    assert(E.validateSave(g), name); assert.equal(g.version, 4); assert.equal(JSON.stringify(old), before);
+    assert(E.validateSave(g), name); assert.equal(g.version, 5); assert.equal(JSON.stringify(old), before);
     for (const field of ['map', 'combat', 'phase', 'floor', 'gold', 'xp', 'treasures', 'turn', 'potions']) assert.deepEqual(g[field], old[field]);
     for (const [i, h] of [...g.party, ...g.reserves].entries()) {
       const previous = [...old.party, ...old.reserves][i];

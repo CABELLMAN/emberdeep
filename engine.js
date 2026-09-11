@@ -37,7 +37,16 @@
     return g;
   }
   function enemy(type,i,floor) { const defs={rat:['Cinder Rat',13,4,0,'rat'],raider:['Hollow Raider',21,6,0,'sword'],guard:['Bone Sentinel',29,6,2,'shield'],hexer:['Ash Hexer',22,7,0,'spark'],boss:['The Ash Warden',100,10,1,'crown']}; const [name,hp,attack,armor,icon]=defs[type];return {id:`foe-${i}`,type,name,hp:hp+(type==='boss'?0:(floor-1)*3),maxHp:hp+(type==='boss'?0:(floor-1)*3),attack,armor,icon,marked:0,intent:null}; }
-  function setIntents(g) { const alive=g.party.map((h,i)=>h.hp>0?i:-1).filter(i=>i>=0); const rng=random(`${g.seed}/${g.floor}/${g.turn}/${g.combat.round}`);for(const e of g.combat.enemies){ const target=alive[Math.floor(rng()*alive.length)]; let type='strike',damage=e.attack;if(e.type==='boss'){const cycle=(g.combat.round-1)%3;if(cycle===1){type='charge';damage=0;}if(cycle===2){type='all';damage=e.areaDamage;}}else if(e.type==='hexer'&&g.combat.round%2===0){type='all';damage=e.areaDamage;}e.intent={type,damage,target};} }
+  function setIntents(g) {
+    const rng=random(`${g.seed}/${g.floor}/${g.turn}/${g.combat.round}`);
+    for(const e of g.combat.enemies){
+      const eligible=C.formationTargets(g,e),target=eligible[Math.floor(rng()*eligible.length)];
+      let type='strike',damage=e.attack;
+      if(e.type==='boss'){const cycle=(g.combat.round-1)%3;if(cycle===1){type='charge';damage=0;}if(cycle===2){type='all';damage=e.areaDamage;}}
+      else if(e.type==='hexer'&&g.combat.round%2===0){type='all';damage=e.areaDamage;}
+      e.intent={type,damage,target};
+    }
+  }
   function beginCombat(g,entity) {
     const types=entity.type==='boss'?['boss','guard']:entity.kind==='rats'?['rat','rat']:entity.kind==='raiders'?['raider','rat']:entity.kind==='hexers'?['hexer','guard']:['guard','raider'];
     const difficulty=C.DIFFICULTIES[g.difficulty];
@@ -88,14 +97,14 @@
     g.phase=boss?'won':'explore';g.combat=null;
     log(g,`${boss?'The Warden falls! Return to town with the Emberheart shard.':'The chamber is yours. Living heroes recover 4 health.'} +${gold} gold, +${xp} training XP.`,'loot');return true;
   }
-  function enemyTurn(g) { for(const e of g.combat.enemies.filter(e=>e.hp>0)){const intent=e.intent;if(intent.type==='charge'){log(g,`${e.name} gathers embers. A devastating attack is coming.`,'combat');continue;}let targets=intent.type==='all'?g.party.filter(h=>h.hp>0):[g.party[intent.target]?.hp>0?g.party[intent.target]:g.party.find(h=>h.hp>0)].filter(Boolean);for(const h of targets){const armored=Math.max(1,intent.damage-h.armor);const damage=g.combat.guard?Math.ceil(armored/2):armored;h.hp=Math.max(0,h.hp-damage);log(g,`${e.name} hits ${h.name} for ${damage}${h.hp===0?' — fallen':''}.`,'danger');}if(g.party.every(h=>h.hp<=0)){g.phase='lost';log(g,'The torch goes dark. Your expedition has ended.','danger');return;}}g.combat.round++;g.combat.guard=false;g.party.forEach(h=>{h.acted=false;h.cooldown=Math.max(0,h.cooldown-1);});setIntents(g); }
-  function act(g,heroIndex,action,targetIndex=0) { if(!Number.isInteger(heroIndex))return false;const h=g.party[heroIndex];if(!h||h.hp<=0||!['attack','special','potion','guard'].includes(action))return false;
+  function enemyTurn(g) { for(const e of g.combat.enemies.filter(e=>e.hp>0)){const intent=e.intent;if(intent.type==='charge'){log(g,`${e.name} gathers embers. A devastating attack is coming.`,'combat');continue;}let targets=intent.type==='all'?g.party.filter(h=>h.hp>0):[g.party[C.intentTarget(g,e)]].filter(Boolean);for(const h of targets){const armored=Math.max(1,intent.damage-h.armor);const damage=g.combat.guard?Math.ceil(armored/2):armored;h.hp=Math.max(0,h.hp-damage);log(g,`${e.name} hits ${h.name} for ${damage}${h.hp===0?' — fallen':''}.`,'danger');}if(g.party.every(h=>h.hp<=0)){g.phase='lost';log(g,'The torch goes dark. Your expedition has ended.','danger');return;}}g.combat.round++;g.combat.guard=false;g.party.forEach(h=>{h.acted=false;h.cooldown=Math.max(0,h.cooldown-1);});setIntents(g); }
+  function act(g,heroIndex,action,targetIndex=0) { if(!Number.isInteger(heroIndex)||!Number.isInteger(targetIndex))return false;const h=g.party[heroIndex];if(!h||h.hp<=0||!['attack','special','potion','guard'].includes(action))return false;
     if(g.phase==='explore'){if(action!=='potion')return false;const target=g.party[targetIndex];if(!target||target.hp<=0||target.hp===target.maxHp||g.potions<=0)return false;g.potions--;target.hp=Math.min(target.maxHp,target.hp+18);g.turn++;log(g,`${target.name} drinks a draught and recovers 18 health.`,'heal');return true;}
     if(g.phase!=='combat'||h.acted)return false;const c=g.combat,e=c.enemies[targetIndex];
     if(action==='attack'&&(!e||e.hp<=0))return false;
     if(action==='special'&&(h.cooldown>0||h.id==='ranger'&&(!e||e.hp<=0)))return false;
     if(action==='potion'){const target=g.party[targetIndex];if(!target||target.hp<=0||target.hp===target.maxHp||g.potions<=0)return false;g.potions--;target.hp=Math.min(target.maxHp,target.hp+18);log(g,`${h.name} restores 18 health to ${target.name}.`,'heal');}
-    if(action==='attack')hurt(g,e,h.attack,C.equippedWeapon(h).damage);
+    if(action==='attack')hurt(g,e,C.combatAttack(g,h).total,C.equippedWeapon(h).damage);
     if(action==='special'){h.cooldown=2;if(h.id==='warden'){c.guard=true;log(g,`${h.name} raises Bulwark. All incoming damage is halved this round.`,'heal');}else if(h.id==='ranger'){hurt(g,e,h.attack-2,C.equippedWeapon(h).damage);if(e.hp>0)e.marked=2;log(g,`${h.name} marks the quarry. The next two hits gain +3 damage.`,'combat');}else {log(g,`${h.name} unleashes an Ember Wave.`,'combat');c.enemies.filter(v=>v.hp>0).forEach(v=>hurt(g,v,h.attack+1,{arcane:100}));}}
     if(action==='guard'){log(g,`${h.name} holds their action.`);}
     h.acted=true;g.turn++;if(checkVictory(g))return true;if(g.party.every(v=>v.hp<=0||v.acted))enemyTurn(g);return true;
@@ -105,8 +114,8 @@
   function validateSave(g) {
     try {
       const num=(v,max=1000000)=>Number.isFinite(v)&&v>=0&&v<=max;
-      if(g?.version!==4||typeof g.seed!=='string'||g.seed.length>40||!Number.isInteger(g.floor)||g.floor<1||g.floor>3||!['town','explore','combat','won','lost'].includes(g.phase)||!Number.isInteger(g.turn)||!num(g.turn))return false;
-      if(!Array.isArray(g.party)||g.party.length!==3||!C.validateCampaign(g))return false;
+      if(g?.version!==5||typeof g.seed!=='string'||g.seed.length>40||!Number.isInteger(g.floor)||g.floor<1||g.floor>3||!['town','explore','combat','won','lost'].includes(g.phase)||!Number.isInteger(g.turn)||!num(g.turn))return false;
+      if(!Array.isArray(g.party)||g.party.length<1||g.party.length>C.MAX_PARTY||!C.validateCampaign(g))return false;
       const allDead=g.party.every(h=>h.hp===0);
       if((g.phase==='lost')!==allDead||g.phase==='won'&&g.floor!==3)return false;
       if(!Number.isInteger(g.potions)||!num(g.potions)||!Number.isInteger(g.gold)||!num(g.gold)||!Number.isInteger(g.kills)||!num(g.kills)||!Number.isInteger(g.xp)||!num(g.xp))return false;
@@ -119,7 +128,7 @@
         const c=g.combat;
         if(!c||typeof c.guard!=='boolean'||typeof c.boss!=='boolean'||typeof c.entityId!=='string'||!Number.isInteger(c.round)||c.round<1||!Array.isArray(c.enemies)||c.enemies.length<1||c.enemies.length>3)return false;
         if(!m.entities.some(e=>e.id===c.entityId&&e.x===g.pos.x&&e.y===g.pos.y&&e.type===(c.boss?'boss':'enemy')))return false;
-        if(c.enemies.some(e=>!['rat','raider','guard','hexer','boss'].includes(e.type)||typeof e.name!=='string'||!num(e.hp,1000)||!num(e.maxHp,1000)||e.maxHp<1||e.hp>e.maxHp||!num(e.armor,1000)||!num(e.attack,1000)||!num(e.areaDamage,1000)||!Number.isInteger(e.marked)||!num(e.marked,2)||!e.intent||!['strike','charge','all'].includes(e.intent.type)||!num(e.intent.damage,1000)||!Number.isInteger(e.intent.target)||e.intent.target<0||e.intent.target>2))return false;
+        if(c.enemies.some(e=>!['rat','raider','guard','hexer','boss'].includes(e.type)||typeof e.name!=='string'||!num(e.hp,1000)||!num(e.maxHp,1000)||e.maxHp<1||e.hp>e.maxHp||!num(e.armor,1000)||!num(e.attack,1000)||!num(e.areaDamage,1000)||!Number.isInteger(e.marked)||!num(e.marked,2)||!e.intent||!['strike','charge','all'].includes(e.intent.type)||!num(e.intent.damage,1000)||!Number.isInteger(e.intent.target)||e.intent.target<0||e.intent.target>=g.party.length))return false;
         if(g.phase==='combat'&&(!c.enemies.some(e=>e.hp>0)||g.party.every(h=>h.hp<=0||h.acted)))return false;
       } else if(g.combat!==null)return false;
       return true;
